@@ -1,0 +1,11 @@
+.DS_Store
+__pycache__/
+*.py[cod]
+.esphome/
+secrets.yaml
+secrets*.yaml
+/govee-h6076.yaml
+*.bin
+*.elf
+*.map
+*.html

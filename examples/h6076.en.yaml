@@ -1,0 +1,239 @@
+esphome:
+  name: govee-h6076
+  friendly_name: Govee H6076
+
+esp32:
+  variant: ESP32C3
+  flash_size: 4MB
+  framework:
+    type: esp-idf
+    sdkconfig_options:
+      CONFIG_ESP_CONSOLE_NONE: "y"
+      CONFIG_ESP_CONSOLE_SECONDARY_NONE: "y"
+
+# GPIO18/19 are used by the FR8018HD, so the USB-Serial/JTAG console is disabled.
+logger:
+  hardware_uart: UART0
+  baud_rate: 0
+  level: WARN
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+  min_auth_mode: WPA2
+  power_save_mode: none
+  reboot_timeout: 0s
+
+api:
+  actions:
+    - action: start_sleep
+      variables: {minutes: int}
+      then:
+        - govee_h6076.start_sleep:
+            id: fr_light_output
+            minutes: !lambda return minutes;
+    - action: cancel_sleep
+      then:
+        - govee_h6076.cancel_sleep:
+            id: fr_light_output
+    - action: set_segment
+      variables: {segment: int, red: int, green: int, blue: int, brightness: int}
+      then:
+        - govee_h6076.set_segment:
+            id: segment_pattern
+            light_id: floor_lamp
+            segment: !lambda return segment;
+            red: !lambda return red;
+            green: !lambda return green;
+            blue: !lambda return blue;
+            brightness: !lambda return brightness;
+    - action: set_music_color
+      variables: {color_index: int, red: int, green: int, blue: int}
+      then:
+        - govee_h6076.set_music_color:
+            id: fr_light_output
+            color_index: !lambda return color_index;
+            red: !lambda return red;
+            green: !lambda return green;
+            blue: !lambda return blue;
+    - action: set_music_background
+      variables: {red: int, green: int, blue: int, brightness: int}
+      then:
+        - govee_h6076.set_music_background:
+            id: fr_light_output
+            red: !lambda return red;
+            green: !lambda return green;
+            blue: !lambda return blue;
+            brightness: !lambda return brightness;
+    - action: set_music_gradient
+      variables: {gradient: bool}
+      then:
+        - govee_h6076.set_music_gradient:
+            id: fr_light_output
+            gradient: !lambda return gradient;
+    - action: set_custom_brightness_shape
+      variables: {shape: int}
+      then:
+        - govee_h6076.set_custom_brightness_shape:
+            id: fr_light_output
+            shape: !lambda return shape;
+  reboot_timeout: 0s
+  encryption:
+    key: !secret api_encryption_key
+
+ota:
+  - platform: esphome
+    encryption:
+
+external_components:
+  - source:
+      type: git
+      url: https://github.com/makerspace-partheland/esphome-govee_h6076.git
+      ref: main
+    components: [govee_h6076]
+
+uart:
+  id: fr8018h_uart
+  tx_pin: GPIO19
+  rx_pin: GPIO18
+  baud_rate: 115200
+  data_bits: 8
+  parity: NONE
+  stop_bits: 1
+  rx_buffer_size: 2048
+
+light:
+  - platform: govee_h6076
+    id: floor_lamp
+    output_id: fr_light_output
+    name: Floor lamp
+    uart_id: fr8018h_uart
+    music_palette: [0xFF0000, 0xFF7F00, 0xFFFF00, 0x00FF00, 0x0000FF, 0x00FFFF, 0x8B00FF]
+    restore_mode: RESTORE_DEFAULT_OFF
+    native_sleep: true
+    time_id: govee_clock
+    sleep_timer:
+      name: Sleep mode
+    music_sensitivity:
+      name: Music sensitivity
+      initial_value: 99
+    effects:
+      - govee_h6076_music:
+          name: "Music - Changing color areas"
+          govee_h6076_id: fr_light_output
+          mode: custom
+          custom_action_type: 4
+          custom_spot_length: 4
+          custom_brightness_min: 20
+          custom_brightness_max: 100
+      - govee_h6076_music:
+          name: "Music - Changing color regions"
+          govee_h6076_id: fr_light_output
+          mode: custom
+          custom_action_type: 6
+          custom_spot_length: 4
+          custom_brightness_min: 20
+          custom_brightness_max: 100
+      - govee_h6076_music:
+          name: "Music - Changing light blocks"
+          govee_h6076_id: fr_light_output
+          mode: custom
+          custom_action_type: 2
+          custom_spot_length: 4
+          custom_brightness_min: 20
+          custom_brightness_max: 100
+      - govee_h6076_music:
+          name: "Music - Color areas with gaps"
+          govee_h6076_id: fr_light_output
+          mode: custom
+          custom_action_type: 3
+          custom_spot_length: 4
+          custom_brightness_min: 20
+          custom_brightness_max: 100
+      - govee_h6076_music:
+          name: "Music - Cycling colors"
+          govee_h6076_id: fr_light_output
+          mode: custom
+          custom_action_type: 1
+          custom_spot_length: 4
+          custom_color_distribution: blocks
+          custom_color_change: timed
+          custom_color_order: sequential
+      - govee_h6076_music:
+          name: "Music - Distributed light blocks"
+          govee_h6076_id: fr_light_output
+          mode: custom
+          custom_action_type: 5
+          custom_spot_length: 4
+          custom_brightness_min: 20
+          custom_brightness_max: 100
+      - govee_h6076_music:
+          name: "Music - Random colors"
+          govee_h6076_id: fr_light_output
+          mode: custom
+          custom_action_type: 1
+          custom_spot_length: 4
+          custom_color_distribution: blocks
+          custom_color_change: timed
+          custom_color_order: random
+      - govee_h6076_music:
+          name: Music - Rhythm
+          govee_h6076_id: fr_light_output
+          mode: rhythm
+      - govee_h6076_music:
+          name: "Music - Spots forward"
+          govee_h6076_id: fr_light_output
+          mode: custom
+          custom_action_type: 1
+          custom_spot_length: 4
+          custom_brightness_min: 20
+          custom_brightness_max: 100
+          custom_direction: forward
+          custom_idle_brightness: 0
+          custom_decay_speed: 1
+      - govee_h6076_music:
+          name: "Music - Spots backward"
+          govee_h6076_id: fr_light_output
+          mode: custom
+          custom_action_type: 1
+          custom_spot_length: 4
+          custom_direction: reverse
+          custom_idle_brightness: 0
+          custom_decay_speed: 1
+      - govee_h6076_scene:
+          name: Scene - Rainbow
+          govee_h6076_id: fr_light_output
+          scene: rainbow
+      - govee_h6076_segments:
+          effect_id: segment_pattern
+          name: "Segments"
+          govee_h6076_id: fr_light_output
+          segments:
+            - color: 0xFF0000
+              brightness: 100
+            - color: 0xFF7F00
+              brightness: 100
+            - color: 0xFFFF00
+              brightness: 100
+            - color: 0x00FF00
+              brightness: 100
+            - color: 0x0000FF
+              brightness: 100
+            - color: 0x00FFFF
+              brightness: 100
+            - color: 0x8B00FF
+              brightness: 100
+
+number: []
+
+time:
+  - platform: homeassistant
+    id: govee_clock
+
+esp32_ble_tracker:
+  scan_parameters:
+    active: false
+
+bluetooth_proxy:
+  active: true
+  connection_slots: 1
