@@ -159,13 +159,10 @@ def validate_music_settings(config):
             raise cv.Invalid(f"{key} requires mode: custom")
     if config.get(CONF_CUSTOM_BRIGHTNESS_MIN, 20) > config.get(CONF_CUSTOM_BRIGHTNESS_MAX, 100):
         raise cv.Invalid("custom_brightness_min must be less than or equal to custom_brightness_max")
-    if CONF_CUSTOM_BRIGHTNESS_SHAPE in config and mode != "custom":
-        raise cv.Invalid("custom_brightness_shape requires mode: custom")
-    if CONF_CUSTOM_SPOT_LENGTH in config and mode != "custom":
-        raise cv.Invalid("custom_spot_length requires mode: custom")
-    if CONF_CUSTOM_ACTION_TYPE in config and mode != "custom":
-        raise cv.Invalid("custom_action_type requires mode: custom")
-    if any(
+    for key in (CONF_CUSTOM_BRIGHTNESS_SHAPE, CONF_CUSTOM_SPOT_LENGTH, CONF_CUSTOM_ACTION_TYPE):
+        if key in config and mode != "custom":
+            raise cv.Invalid(f"{key} requires mode: custom")
+    if (mode != "custom" or config.get(CONF_CUSTOM_ACTION_TYPE, 1) != 1) and any(
         key in config
         for key in (
             CONF_CUSTOM_DIRECTION,
@@ -176,12 +173,11 @@ def validate_music_settings(config):
             CONF_CUSTOM_COLOR_DISTRIBUTION,
         )
     ):
-        if mode != "custom" or config.get(CONF_CUSTOM_ACTION_TYPE, 1) != 1:
-            raise cv.Invalid(
-                "custom_direction, custom_idle_brightness, custom_decay_speed, custom_color_order, "
-                "custom_color_change and custom_color_distribution require mode: custom and "
-                "custom_action_type: 1"
-            )
+        raise cv.Invalid(
+            "custom_direction, custom_idle_brightness, custom_decay_speed, custom_color_order, "
+            "custom_color_change and custom_color_distribution require mode: custom and "
+            "custom_action_type: 1"
+        )
     if CONF_FIXED_COLOR in config and mode not in {"rhythm", "bounce", "hopping", "beat", "spray"}:
         raise cv.Invalid("fixed_color is only supported by rhythm, bounce, hopping, beat and spray")
     if CONF_CALM in config and mode != "rhythm":
@@ -259,17 +255,9 @@ async def govee_music_to_code(config, effect_id):
     cg.add(var.set_parent(parent))
     cg.add(var.set_mode(config[CONF_MODE]))
     for key in (
-        CONF_CUSTOM_BRIGHTNESS_SHAPE,
-        CONF_CUSTOM_SPOT_LENGTH,
-        CONF_CUSTOM_ACTION_TYPE,
+        *CUSTOM_MUSIC_FIELDS,
         CONF_CUSTOM_BRIGHTNESS_MIN,
         CONF_CUSTOM_BRIGHTNESS_MAX,
-        CONF_CUSTOM_DIRECTION,
-        CONF_CUSTOM_IDLE_BRIGHTNESS,
-        CONF_CUSTOM_DECAY_SPEED,
-        CONF_CUSTOM_COLOR_ORDER,
-        CONF_CUSTOM_COLOR_CHANGE,
-        CONF_CUSTOM_COLOR_DISTRIBUTION,
         CONF_PIANO_BARS,
         CONF_GRADIENT,
         CONF_BACKGROUND_COLOR,
