@@ -104,6 +104,7 @@ uart:
 
 light:
   - platform: govee_h6076
+    resume_effect: true
     id: floor_lamp
     output_id: fr_light_output
     name: Stehlampe
@@ -211,18 +212,25 @@ light:
           segments:
             - color: 0xFF0000
               brightness: 100
+              light: {name: Segment 1}
             - color: 0xFF7F00
               brightness: 100
+              light: {name: Segment 2}
             - color: 0xFFFF00
               brightness: 100
+              light: {name: Segment 3}
             - color: 0x00FF00
               brightness: 100
+              light: {name: Segment 4}
             - color: 0x0000FF
               brightness: 100
+              light: {name: Segment 5}
             - color: 0x00FFFF
               brightness: 100
+              light: {name: Segment 6}
             - color: 0x8B00FF
               brightness: 100
+              light: {name: Segment 7}
 
 number: []
 

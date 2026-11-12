@@ -1,7 +1,18 @@
-from esphome import automation
 import esphome.codegen as cg
 import esphome.config_validation as cv
-from esphome.components import binary_sensor, button, light, number, select, sensor, switch, text_sensor, time, uart
+from esphome import automation
+from esphome.components import (
+    binary_sensor,
+    button,
+    light,
+    number,
+    select,
+    sensor,
+    switch,
+    text_sensor,
+    time,
+    uart,
+)
 from esphome.components.light.effects import register_rgb_effect
 from esphome.components.light.types import LightEffect
 from esphome.const import (
@@ -11,25 +22,29 @@ from esphome.const import (
     CONF_COLOR,
     CONF_DEFAULT_TRANSITION_LENGTH,
     CONF_DISABLED_BY_DEFAULT,
+    CONF_ESPHOME,
     CONF_GAMMA_CORRECT,
     CONF_GREEN,
     CONF_ID,
     CONF_INITIAL_VALUE,
+    CONF_LIGHT,
     CONF_LIGHT_ID,
     CONF_MINUTES,
     CONF_MODE,
     CONF_NAME,
     CONF_OUTPUT_ID,
+    CONF_PROJECT,
     CONF_RED,
     CONF_SEGMENTS,
     CONF_TIME_ID,
-    DEVICE_CLASS_DURATION,
     DEVICE_CLASS_CONNECTIVITY,
+    DEVICE_CLASS_DURATION,
     DEVICE_CLASS_PROBLEM,
     ENTITY_CATEGORY_CONFIG,
     ENTITY_CATEGORY_DIAGNOSTIC,
     UNIT_MINUTE,
 )
+from esphome.core import CORE
 
 from . import DOMAIN, VERSION
 from .scene_catalogue import SCENE_CATALOGUE
@@ -300,6 +315,12 @@ async def govee_scene_to_code(config, effect_id):
 
 
 GoveeSegmentsEffect = ns.class_("GoveeSegmentsEffect", LightEffect)
+GoveeSegmentLight = ns.class_("GoveeSegmentLight", light.LightOutput)
+
+SEGMENT_LIGHT_SCHEMA = light.light_schema(GoveeSegmentLight, light.LightType.RGB).extend({
+    cv.Optional(CONF_GAMMA_CORRECT, default=1.0): cv.positive_float,
+    cv.Optional(CONF_DEFAULT_TRANSITION_LENGTH, default="0s"): cv.positive_time_period_milliseconds,
+})
 
 @register_rgb_effect(CONF_GOVEE_H6076_SEGMENTS, GoveeSegmentsEffect, "Segments", {
     cv.Optional(CONF_EFFECT_ID): cv.declare_id(GoveeSegmentsEffect),
@@ -307,6 +328,7 @@ GoveeSegmentsEffect = ns.class_("GoveeSegmentsEffect", LightEffect)
     cv.Required(CONF_SEGMENTS): cv.All(cv.ensure_list(cv.Schema({
         cv.Required(CONF_COLOR): cv.int_range(min=0, max=0xFFFFFF),
         cv.Optional(CONF_BRIGHTNESS, default=100): cv.int_range(min=0, max=100),
+        cv.Optional(CONF_LIGHT): SEGMENT_LIGHT_SCHEMA,
     })), cv.Length(min=7, max=7)),
 })
 async def govee_segments_to_code(config, effect_id):
@@ -315,6 +337,12 @@ async def govee_segments_to_code(config, effect_id):
     cg.add(var.set_parent(parent))
     for index, segment in enumerate(config[CONF_SEGMENTS]):
         cg.add(var.set_segment(index, segment[CONF_COLOR], segment[CONF_BRIGHTNESS]))
+        if CONF_LIGHT in segment:
+            cg.add_define("USE_GOVEE_SEGMENT_LIGHTS")
+            output = await light.new_light(segment[CONF_LIGHT])
+            cg.add(output.set_parent(var))
+            cg.add(output.set_segment_index(index))
+            cg.add(var.set_segment_light(index, output))
     return var
 
 GoveeDreamViewSwitch = ns.class_("GoveeDreamViewSwitch", switch.Switch)
@@ -425,11 +453,16 @@ def validate_native_sleep(config):
         raise cv.Invalid("sleep entities require native_sleep: true")
     return config
 
-CONFIG_SCHEMA = cv.All(CONFIG_SCHEMA, validate_native_sleep)
 
+CONFIG_SCHEMA = cv.All(CONFIG_SCHEMA, validate_native_sleep)
 
 async def to_code(config):
     cg.add_define("GOVEE_H6076_VERSION", VERSION)
+    if CONF_PROJECT not in CORE.config[CONF_ESPHOME]:
+        # HA derives the device manufacturer/model from native project information.
+        cg.add_define("ESPHOME_PROJECT_NAME", "Govee.H6076")
+        cg.add_define("ESPHOME_PROJECT_VERSION", VERSION)
+        cg.add_define("ESPHOME_PROJECT_VERSION_30", VERSION[:29])
     var = cg.new_Pvariable(config[CONF_OUTPUT_ID])
     await cg.register_component(var, config)
     await light.register_light(var, config)

@@ -1,5 +1,6 @@
 #include "govee_h6076.h"
 
+#include <algorithm>
 #include <cmath>
 #include "esphome/core/hal.h"
 #include "esphome/core/application.h"
@@ -15,6 +16,88 @@
 namespace esphome::govee_h6076 {
 
 static const char *const TAG = "govee_h6076";
+
+#ifdef USE_GOVEE_SEGMENT_LIGHTS
+void GoveeSegmentLight::update_state(light::LightState *state) {
+  // LightState restores itself during setup; only later user commands select a pattern.
+  if (this->publishing_ || !this->initialized_)
+    return;
+  const auto &values = state->current_values;
+  const auto channel = [state, &values](float value) {
+    return static_cast<uint8_t>(std::lround(state->gamma_correct_lut(value * values.get_color_brightness()) * 255));
+  };
+  const uint32_t color = (uint32_t(channel(values.get_red())) << 16) |
+                         (uint32_t(channel(values.get_green())) << 8) | channel(values.get_blue());
+  const uint8_t brightness =
+      values.is_on() ? static_cast<uint8_t>(std::lround(state->gamma_correct_lut(values.get_brightness()) * 100)) : 0;
+  this->controlling_ = true;
+  this->parent_->control_segment(this->segment_index_, color, brightness);
+  this->controlling_ = false;
+}
+
+void GoveeSegmentLight::write_state(light::LightState *) { this->initialized_ = true; }
+
+void GoveeSegmentLight::publish_segment(const protocol::Segment &segment, bool active) {
+  if (!this->initialized_)
+    return;
+  const bool on = active && segment.brightness != 0;
+  const auto &previous = this->published_segment_;
+  if (this->has_published_ && this->published_active_ == on && previous.red == segment.red &&
+      previous.green == segment.green && previous.blue == segment.blue && previous.brightness == segment.brightness)
+    return;
+  this->published_segment_ = segment;
+  this->published_active_ = on;
+  this->has_published_ = true;
+  // Preserve an in-flight transition, but do not cache a power state that was not published.
+  if (this->controlling_) {
+    if (on != this->state_->remote_values.is_on())
+      this->has_published_ = false;
+    return;
+  }
+  this->publishing_ = true;
+  auto call = this->state_->make_call();
+  call.set_state(on);
+  const float red = this->state_->gamma_uncorrect_lut(segment.red / 255.0f);
+  const float green = this->state_->gamma_uncorrect_lut(segment.green / 255.0f);
+  const float blue = this->state_->gamma_uncorrect_lut(segment.blue / 255.0f);
+  // LightCall normalizes RGB channels; retain their intensity separately, including black.
+  call.set_rgb(red, green, blue);
+  call.set_color_brightness(std::max({red, green, blue}));
+  // Keep the last nonzero brightness available for the next turn-on command.
+  if (segment.brightness != 0)
+    call.set_brightness(this->state_->gamma_uncorrect_lut(segment.brightness / 100.0f));
+  call.set_transition_length(0);
+  call.set_save(false);
+  call.perform();
+  this->publishing_ = false;
+}
+
+void GoveeSegmentsEffect::init() {
+  this->state_->add_remote_values_listener(this);
+}
+
+void GoveeSegmentsEffect::control_segment(size_t index, uint32_t color, uint8_t brightness) {
+  this->set_segment(index, color, brightness);
+  if (this->state_ == nullptr || (brightness == 0 && !this->active_))
+    return;
+  const bool any_on = std::any_of(this->segments_.begin(), this->segments_.end(),
+                                [](const protocol::Segment &segment) { return segment.brightness != 0; });
+  auto call = this->state_->make_call();
+  call.set_state(any_on);
+  if (any_on)
+    call.set_effect(this->get_index());
+  call.set_transition_length(0);
+  call.perform();
+}
+
+void GoveeSegmentsEffect::publish_segments_() {
+  const bool active = this->active_ && this->state_ != nullptr && this->state_->remote_values.is_on();
+  for (size_t i = 0; i < this->segment_lights_.size(); ++i) {
+    if (this->segment_lights_[i] != nullptr)
+      this->segment_lights_[i]->publish_segment(this->segments_[i], active);
+  }
+}
+#endif
 
 void GoveeLight::setup() {
   this->controller_.begin(millis());
@@ -81,6 +164,11 @@ void GoveeLight::update_state(light::LightState *state) {
   }
   auto target = this->controller_.state();
   target.power = values.is_on();
+  if (!target.power) {
+    // Color writes can switch on the FR. Preserve its confirmed color and brightness when switching off.
+    this->controller_.request(target);
+    return;
+  }
   target.brightness = static_cast<uint8_t>(std::lround(correct(values.get_brightness()) * 100));
   if (this->controller_.effect_requested()) {
     // Brightness and power remain controllable without stopping music by setting a color.

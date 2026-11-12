@@ -1,5 +1,6 @@
 #pragma once
 
+#include <array>
 #include <cmath>
 #include <vector>
 
@@ -301,7 +302,37 @@ class GoveeSceneEffect final : public light::LightEffect {
   std::vector<uint8_t> body_;
 };
 
-class GoveeSegmentsEffect final : public light::LightEffect {
+#ifdef USE_GOVEE_SEGMENT_LIGHTS
+class GoveeSegmentsEffect;
+
+class GoveeSegmentLight final : public light::LightOutput {
+ public:
+  void set_parent(GoveeSegmentsEffect *parent) { this->parent_ = parent; }
+  void set_segment_index(size_t index) { this->segment_index_ = index; }
+  void setup_state(light::LightState *state) override { this->state_ = state; }
+  light::LightTraits get_traits() override {
+    light::LightTraits traits;
+    traits.set_supported_color_modes({light::ColorMode::RGB});
+    return traits;
+  }
+  void update_state(light::LightState *state) override;
+  void write_state(light::LightState *) override;
+  void publish_segment(const protocol::Segment &segment, bool active);
+
+ protected:
+  GoveeSegmentsEffect *parent_{nullptr};
+  light::LightState *state_{nullptr};
+  size_t segment_index_{0};
+  protocol::Segment published_segment_{};
+  bool initialized_{false}, publishing_{false}, controlling_{false}, has_published_{false}, published_active_{false};
+};
+#endif
+
+class GoveeSegmentsEffect final : public light::LightEffect
+#ifdef USE_GOVEE_SEGMENT_LIGHTS
+    , public light::LightRemoteValuesListener
+#endif
+{
  public:
   explicit GoveeSegmentsEffect(const char *name) : LightEffect(name) {}
   void set_parent(GoveeLight *parent) { this->parent_ = parent; }
@@ -311,7 +342,16 @@ class GoveeSegmentsEffect final : public light::LightEffect {
     this->segments_[index] = {uint8_t(color >> 16), uint8_t(color >> 8), uint8_t(color), brightness};
     if (this->active_)
       this->parent_->start_segments(this->segments_);
+#ifdef USE_GOVEE_SEGMENT_LIGHTS
+    this->publish_segments_();
+#endif
   }
+#ifdef USE_GOVEE_SEGMENT_LIGHTS
+  void init() override;
+  void set_segment_light(size_t index, GoveeSegmentLight *output) { this->segment_lights_[index] = output; }
+  void control_segment(size_t index, uint32_t color, uint8_t brightness);
+  void on_light_remote_values_update() override { this->publish_segments_(); }
+#endif
   void start() override {
     this->active_ = true;
     this->parent_->start_segments(this->segments_);
@@ -319,10 +359,17 @@ class GoveeSegmentsEffect final : public light::LightEffect {
   void stop() override {
     this->active_ = false;
     this->parent_->stop_music();
+#ifdef USE_GOVEE_SEGMENT_LIGHTS
+    this->publish_segments_();
+#endif
   }
   void apply() override {}
 
  protected:
+#ifdef USE_GOVEE_SEGMENT_LIGHTS
+  void publish_segments_();
+  std::array<GoveeSegmentLight *, 7> segment_lights_{};
+#endif
   GoveeLight *parent_{nullptr};
   protocol::Segments segments_{};
   bool active_{false};
