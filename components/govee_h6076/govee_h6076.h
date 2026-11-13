@@ -43,6 +43,10 @@ class GoveeSleepNumber;
 class GoveeDreamViewSwitch;
 #endif
 
+#ifdef USE_GOVEE_MUSIC_COLORS
+class GoveeMusicColorLight;
+#endif
+
 class GoveeLight final : public Component, public light::LightOutput, public uart::UARTDevice {
  public:
   void setup() override;
@@ -167,14 +171,10 @@ class GoveeLight final : public Component, public light::LightOutput, public uar
     if (this->controller_.music_requested())
       this->controller_.start_music(this->music_sensitivity_, this->music_mode_, this->music_settings_);
   }
-  void set_music_color(uint8_t index, uint32_t rgb) {
-    if (index >= 7)
-      return;
-    this->palette_[index * 3] = rgb >> 16;
-    this->palette_[index * 3 + 1] = rgb >> 8;
-    this->palette_[index * 3 + 2] = rgb;
-    this->controller_.set_palette(this->palette_);
-  }
+  void set_music_color(uint8_t index, uint32_t rgb);
+#ifdef USE_GOVEE_MUSIC_COLORS
+  void set_music_color_light(size_t index, GoveeMusicColorLight *output) { this->music_colors_[index] = output; }
+#endif
   void start_scene(uint16_t scene, const std::vector<uint8_t> &body) {
     this->controller_.start_scene(scene, body.data(), body.size());
   }
@@ -216,6 +216,9 @@ class GoveeLight final : public Component, public light::LightOutput, public uar
   uint32_t last_sleep_publish_{0};
   light::LightState *state_{nullptr};
   protocol::Palette palette_{protocol::RAINBOW};
+#ifdef USE_GOVEE_MUSIC_COLORS
+  std::array<GoveeMusicColorLight *, 7> music_colors_{};
+#endif
   protocol::Parser parser_;
   protocol::Controller controller_;
   protocol::StaticRgbBrightness static_rgb_brightness_;
@@ -229,6 +232,29 @@ class GoveeLight final : public Component, public light::LightOutput, public uar
   uint8_t music_sensitivity_{99}, music_mode_{0x00};
   protocol::MusicSettings music_settings_{};
 };
+
+#ifdef USE_GOVEE_MUSIC_COLORS
+class GoveeMusicColorLight final : public light::LightOutput {
+ public:
+  void set_parent(GoveeLight *parent) { this->parent_ = parent; }
+  void set_color_index(size_t index) { this->color_index_ = index; }
+  void setup_state(light::LightState *state) override { this->state_ = state; }
+  light::LightTraits get_traits() override {
+    light::LightTraits traits;
+    traits.set_supported_color_modes({light::ColorMode::RGB});
+    return traits;
+  }
+  void update_state(light::LightState *state) override;
+  void write_state(light::LightState *) override {}
+  void publish_color(uint32_t rgb);
+
+ protected:
+  GoveeLight *parent_{nullptr};
+  light::LightState *state_{nullptr};
+  size_t color_index_{0};
+  bool publishing_{false}, controlling_{false};
+};
+#endif
 
 #ifdef USE_GOVEE_DREAMVIEW
 class GoveeDreamViewButton : public button::Button {

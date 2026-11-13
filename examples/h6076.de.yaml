@@ -110,6 +110,14 @@ light:
     name: Stehlampe
     uart_id: fr8018h_uart
     music_palette: [0xFF0000, 0xFF7F00, 0xFFFF00, 0x00FF00, 0x0000FF, 0x00FFFF, 0x8B00FF]
+    music_colors:
+      - name: Musikfarbe 1
+      - name: Musikfarbe 2
+      - name: Musikfarbe 3
+      - name: Musikfarbe 4
+      - name: Musikfarbe 5
+      - name: Musikfarbe 6
+      - name: Musikfarbe 7
     restore_mode: RESTORE_DEFAULT_OFF
     native_sleep: true
     time_id: govee_clock

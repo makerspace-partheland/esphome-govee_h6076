@@ -17,6 +17,52 @@ namespace esphome::govee_h6076 {
 
 static const char *const TAG = "govee_h6076";
 
+void GoveeLight::set_music_color(uint8_t index, uint32_t rgb) {
+  if (index >= 7)
+    return;
+  this->palette_[index * 3] = rgb >> 16;
+  this->palette_[index * 3 + 1] = rgb >> 8;
+  this->palette_[index * 3 + 2] = rgb;
+  this->controller_.set_palette(this->palette_);
+#ifdef USE_GOVEE_MUSIC_COLORS
+  if (this->music_colors_[index] != nullptr)
+    this->music_colors_[index]->publish_color(rgb);
+#endif
+}
+
+#ifdef USE_GOVEE_MUSIC_COLORS
+void GoveeMusicColorLight::update_state(light::LightState *state) {
+  if (this->publishing_)
+    return;
+  float red, green, blue;
+  state->current_values_as_rgb(&red, &green, &blue);
+  const auto channel = [](float value) { return static_cast<uint8_t>(std::lround(value * 255)); };
+  this->controlling_ = true;
+  this->parent_->set_music_color(this->color_index_, (uint32_t(channel(red)) << 16) |
+                                                   (uint32_t(channel(green)) << 8) | channel(blue));
+  this->controlling_ = false;
+}
+
+void GoveeMusicColorLight::publish_color(uint32_t rgb) {
+  if (this->state_ == nullptr || this->controlling_)
+    return;
+  this->publishing_ = true;
+  auto call = this->state_->make_call();
+  call.set_state(rgb != 0);
+  if (rgb != 0) {
+    const float red = this->state_->gamma_uncorrect_lut(((rgb >> 16) & 0xFF) / 255.0f);
+    const float green = this->state_->gamma_uncorrect_lut(((rgb >> 8) & 0xFF) / 255.0f);
+    const float blue = this->state_->gamma_uncorrect_lut((rgb & 0xFF) / 255.0f);
+    call.set_rgb(red, green, blue);
+    call.set_color_brightness(1.0f);
+    call.set_brightness(std::max({red, green, blue}));
+  }
+  call.set_transition_length(0);
+  call.perform();
+  this->publishing_ = false;
+}
+#endif
+
 #ifdef USE_GOVEE_SEGMENT_LIGHTS
 void GoveeSegmentLight::update_state(light::LightState *state) {
   // LightState restores itself during setup; only later user commands select a pattern.

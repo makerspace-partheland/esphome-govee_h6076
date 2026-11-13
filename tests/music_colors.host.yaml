@@ -1,0 +1,36 @@
+# Native test with ESPHome's real light entities; no physical UART or lamp is accessed.
+# CXX enables USE_GOVEE_MUSIC_COLORS and a quoted GOVEE_H6076_VERSION string.
+esphome:
+  name: music-color-test
+  includes:
+    - ../components/govee_h6076
+    - music_color_light_test.h
+  on_boot:
+    priority: -1000
+    then:
+      - lambda: run_music_color_light_tests();
+
+host:
+
+logger:
+  level: ERROR
+
+uart:
+  port: /dev/null
+  baud_rate: 115200
+
+# Load ESPHome's RGB light support for the native harness.
+output:
+  - platform: template
+    id: channel
+    type: float
+    write_action:
+      - lambda: return;
+
+light:
+  - platform: rgb
+    resume_effect: true
+    id: framework_light
+    red: channel
+    green: channel
+    blue: channel

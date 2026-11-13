@@ -1303,11 +1303,17 @@ class Controller {
       this->last_poll_ = now;
     } else if (!this->ready_)
       return;
-    else if (this->dirty_ & POWER && !this->target_.power)
+    // Ending native synchronization can restore the FR's previous on-state.
+    // Complete that transaction before the final power-off command.
+    else if (this->dirty_ & POWER && !this->target_.power
+#ifdef USE_GOVEE_DREAMVIEW
+             && !this->dreamview_.operation_pending()
+#endif
+    )
       command = 0x86;
 #ifdef USE_GOVEE_DREAMVIEW
     else if (this->dreamview_.has_packet() && this->connected(now))
-      command = this->dirty_ & POWER ? 0x86 : 0x83;
+      command = (this->dirty_ & POWER) && this->target_.power ? 0x86 : 0x83;
 #endif
     else if (this->sleep_query_dirty_)
       command = 0x83;

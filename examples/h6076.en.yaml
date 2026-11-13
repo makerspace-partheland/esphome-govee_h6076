@@ -110,6 +110,14 @@ light:
     name: Floor lamp
     uart_id: fr8018h_uart
     music_palette: [0xFF0000, 0xFF7F00, 0xFFFF00, 0x00FF00, 0x0000FF, 0x00FFFF, 0x8B00FF]
+    music_colors:
+      - name: Music color 1
+      - name: Music color 2
+      - name: Music color 3
+      - name: Music color 4
+      - name: Music color 5
+      - name: Music color 6
+      - name: Music color 7
     restore_mode: RESTORE_DEFAULT_OFF
     native_sleep: true
     time_id: govee_clock

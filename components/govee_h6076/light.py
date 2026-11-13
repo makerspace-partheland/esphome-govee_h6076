@@ -26,6 +26,7 @@ from esphome.const import (
     CONF_GAMMA_CORRECT,
     CONF_GREEN,
     CONF_ID,
+    CONF_INITIAL_STATE,
     CONF_INITIAL_VALUE,
     CONF_LIGHT,
     CONF_LIGHT_ID,
@@ -35,7 +36,10 @@ from esphome.const import (
     CONF_OUTPUT_ID,
     CONF_PROJECT,
     CONF_RED,
+    CONF_RESTORE_MODE,
+    CONF_RESTORE_STATE,
     CONF_SEGMENTS,
+    CONF_STATE,
     CONF_TIME_ID,
     DEVICE_CLASS_CONNECTIVITY,
     DEVICE_CLASS_DURATION,
@@ -71,6 +75,8 @@ CONF_GOVEE_H6076_SCENE = "govee_h6076_scene"
 CONF_GOVEE_H6076_SEGMENTS = "govee_h6076_segments"
 CONF_GRADIENT = "gradient"
 CONF_MUSIC_PALETTE = "music_palette"
+CONF_MUSIC_COLORS = "music_colors"
+DEFAULT_MUSIC_PALETTE = [0xFF0000, 0xFF7F00, 0xFFFF00, 0x00FF00, 0x0000FF, 0x00FFFF, 0x8B00FF]
 CONF_MUSIC_SENSITIVITY = "music_sensitivity"
 CONF_DREAMVIEW = "dreamview"
 CONF_MUSIC_EFFECT = "music_effect"
@@ -333,6 +339,24 @@ async def govee_segments_to_code(config, effect_id):
             cg.add(var.set_segment_light(index, output))
     return var
 
+GoveeMusicColorLight = ns.class_("GoveeMusicColorLight", light.LightOutput)
+
+
+def validate_music_color(config):
+    if CONF_RESTORE_MODE not in config and CONF_RESTORE_STATE not in config:
+        config[CONF_RESTORE_STATE] = light.RESTORE_STATE_SCHEMA("all")
+    return config
+
+
+MUSIC_COLOR_SCHEMA = cv.All(
+    light.light_schema(GoveeMusicColorLight, light.LightType.RGB,
+                       entity_category=ENTITY_CATEGORY_CONFIG, icon="mdi:palette").extend({
+        cv.Optional(CONF_GAMMA_CORRECT, default=1.0): cv.positive_float,
+        cv.Optional(CONF_DEFAULT_TRANSITION_LENGTH, default="0s"): cv.positive_time_period_milliseconds,
+    }),
+    validate_music_color,
+)
+
 GoveeDreamViewSwitch = ns.class_("GoveeDreamViewSwitch", switch.Switch)
 GoveeDreamViewButton = ns.class_("GoveeDreamViewButton", button.Button)
 GoveeDreamViewSelect = ns.class_("GoveeDreamViewSelect", select.Select)
@@ -360,10 +384,12 @@ DREAMVIEW_SCHEMA = cv.Schema({
         "DreamView groups are configured automatically; remove create_group"
     ),
     cv.Required(CONF_REMOVE_GROUP): cv.All(
-        button.button_schema(GoveeDreamViewButton), cv.requires_component("button"),
+        button.button_schema(GoveeDreamViewButton, entity_category=ENTITY_CATEGORY_CONFIG), cv.requires_component("button"),
     ),
     cv.Required(CONF_CONNECTION): cv.All(
-        binary_sensor.binary_sensor_schema(device_class=DEVICE_CLASS_CONNECTIVITY),
+        binary_sensor.binary_sensor_schema(
+            device_class=DEVICE_CLASS_CONNECTIVITY, entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
+        ),
         cv.requires_component("binary_sensor"),
     ),
     cv.Required(CONF_PROBLEM): cv.All(
@@ -410,6 +436,7 @@ CONFIG_SCHEMA = (
                 cv.ensure_list(cv.int_range(min=0, max=0xFFFFFF)),
                 cv.Length(min=7, max=7),
             ),
+            cv.Optional(CONF_MUSIC_COLORS): cv.All(cv.ensure_list(MUSIC_COLOR_SCHEMA), cv.Length(min=7, max=7)),
             cv.GenerateID(CONF_OUTPUT_ID): cv.declare_id(GoveeLight),
             cv.Optional(CONF_MUSIC_SENSITIVITY): cv.All(
                 number.number_schema(
@@ -484,6 +511,24 @@ async def to_code(config):
         cg.add(var.set_time_source(source))
     for index, color in enumerate(config.get(CONF_MUSIC_PALETTE, [])):
         cg.add(var.set_music_color(index, color))
+    if CONF_MUSIC_COLORS in config:
+        cg.add_define("USE_GOVEE_MUSIC_COLORS")
+        palette = config.get(CONF_MUSIC_PALETTE, DEFAULT_MUSIC_PALETTE)
+        for index, color_config in enumerate(config[CONF_MUSIC_COLORS]):
+            color = palette[index]
+            conf = dict(color_config)
+            conf[CONF_INITIAL_STATE] = light.LIGHT_STATE_SCHEMA({
+                CONF_STATE: True,
+                CONF_BRIGHTNESS: 1.0,
+                CONF_RED: ((color >> 16) & 0xFF) / 255.0,
+                CONF_GREEN: ((color >> 8) & 0xFF) / 255.0,
+                CONF_BLUE: (color & 0xFF) / 255.0,
+                **conf.get(CONF_INITIAL_STATE, {}),
+            })
+            output = await light.new_light(conf)
+            cg.add(output.set_parent(var))
+            cg.add(output.set_color_index(index))
+            cg.add(var.set_music_color_light(index, output))
     if CONF_MUSIC_SENSITIVITY in config:
         conf = config[CONF_MUSIC_SENSITIVITY]
         sensitivity = cg.new_Pvariable(conf[CONF_ID])

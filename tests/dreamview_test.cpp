@@ -361,9 +361,27 @@ void power_off_cancels_enable() {
   reversal.tick(); // Power-on is in flight, enable has not been sent.
   auto off = reversal.c.state(); off.power = false;
   reversal.c.request(off); reversal.power(true);
-  reversal.tick(); CHECK(reversal.sent.back().bytes[6] == 0x86 && reversal.sent.back().bytes[7] == 0);
+  reversal.confirm_disable(); // Never issue the cancelled enable.
+  reversal.expect_payload(0x86, {0});
   reversal.power(false);
-  reversal.expect({0x33, 0x60, 1, 0}); // Never issue the cancelled enable.
+}
+
+void power_off_follows_dreamview_shutdown() {
+  for (bool reject : {false, true}) {
+    Harness h; h.connect_group();
+    auto off = h.c.state(); off.power = false;
+    h.c.request(off);
+    h.expect({0x33, 0x60, 1, 0});
+    h.reply({0x33, 0x60, 1, uint8_t(reject)});
+    if (!reject) {
+      h.power(true); // Native shutdown can restore the prior static on-state.
+      h.exchange({0xAA, 0x60, 1}, {0xAA, 0x60, 1, 0});
+    }
+    h.expect_payload(0x86, {0});
+    h.power(false);
+    const auto sent = h.sent.size(); h.tick();
+    CHECK(h.sent.size() == sent && !h.c.state().power);
+  }
 }
 
 void enable_readback_mismatch() {
@@ -788,6 +806,7 @@ int main() {
     const char *name;
     void (*run)();
   } cases[]{
+      {"power_off_follows_dreamview_shutdown", power_off_follows_dreamview_shutdown},
       {"startup_reapplies_palette_without_recreating_group", startup_reapplies_palette_without_recreating_group},
       {"palette_failure_blocks_music_and_enable", palette_failure_blocks_music_and_enable},
       {"stop_during_palette_upload", stop_during_palette_upload},
