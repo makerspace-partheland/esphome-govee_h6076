@@ -47,6 +47,16 @@ void check_packet(const Packet &actual, uint8_t command, const std::vector<uint8
   CHECK(mismatch.first == expected.end());
 }
 
+// Captured on H6076: seven RGB colors, two data frames and an empty terminator.
+std::vector<uint8_t> rainbow_payload() {
+  auto result = pt_frame({0xA3, 0, 1, 3, 0x51, 7, 255, 0, 0, 255, 127, 0, 255, 255, 0, 0, 255, 0, 0});
+  const auto second = pt_frame({0xA3, 1, 0, 255, 0, 255, 255, 139, 0, 255});
+  const auto end = pt_frame({0xA3, 0xFF});
+  result.insert(result.end(), second.begin(), second.end());
+  result.insert(result.end(), end.begin(), end.end());
+  return result;
+}
+
 // Synthetic addresses; independent byte fixtures follow the qualified H6076 wire format.
 const DreamViewMembers MEMBERS{{{0x02, 0x12, 0x34, 0x56, 0x78, 0x9A}, {0x02, 0x12, 0x34, 0x56, 0x78, 0x9B}}};
 using Op = DreamView::Operation;
@@ -99,6 +109,10 @@ struct Harness {
     payload.insert(payload.end(), end.begin(), end.end());
     expect_payload(0x83, payload);
   }
+  void confirm_palette() {
+    expect_payload(0x83, rainbow_payload());
+    reply({0xA3, 0x51, 0});
+  }
   void confirm_disable() {
     exchange({0x33, 0x60, 1, 0}, {0x33, 0x60, 1, 0});
     exchange({0xAA, 0x60, 1}, {0xAA, 0x60, 1, 0});
@@ -144,6 +158,7 @@ struct Harness {
     CHECK(c.request_dreamview(Op::ENABLE, now));
     expect_payload(0x86, {1});
     power(true);
+    confirm_palette();
     exchange({0x33, 0x60, 1, 1}, {0x33, 0x60, 1, 0});
     CHECK(!c.dreamview().connected());
     exchange({0xAA, 0x60, 1}, {0xAA, 0x60, 1, 1, 0});
@@ -174,6 +189,7 @@ void music_effect_preserves_group() {
   CHECK(group.c.dreamview().connected() && group.c.dreamview().connection_known());
   group.exchange({0xAA, 0x60, 2}, {0xAA, 0x60, 2, 1, 0, 0, 1, 72});
   CHECK(group.c.dreamview().music_known() && group.c.dreamview().music_effect() == 0);
+  group.confirm_palette();
   group.expect({0x33, 0x60, 2, 1, 11, 0, 1, 72});
   CHECK(group.c.dreamview().music_effect() == 0);  // Never publish the requested value optimistically.
   group.reply({0x33, 0x60, 2, 0});
@@ -188,6 +204,7 @@ void latest_queued_music_effect_wins() {
   // Preserve an in-flight choice, then apply only the latest queued choice.
   CHECK(group.c.request_dreamview_music(0, group.now));
   group.exchange({0xAA, 0x60, 2}, {0xAA, 0x60, 2, 1, 11, 0, 1, 72});
+  group.confirm_palette();
   group.expect({0x33, 0x60, 2, 1, 0, 0, 1, 72});
   CHECK(group.c.request_dreamview_music(5, group.now));
   CHECK(group.c.request_dreamview_music(6, group.now));
@@ -195,6 +212,7 @@ void latest_queued_music_effect_wins() {
   group.reply({0x33, 0x60, 2, 0});
   group.confirm_music_effect(0, 1, 72);
   group.exchange({0xAA, 0x60, 2}, {0xAA, 0x60, 2, 1, 0, 0, 1, 72});
+  group.confirm_palette();
   group.exchange({0x33, 0x60, 2, 1, 6, 0, 1, 72}, {0x33, 0x60, 2, 0});
   group.confirm_music_effect(6, 1, 72);
   CHECK(group.c.dreamview().music_effect() == 6);
@@ -220,6 +238,7 @@ void music_rejection_and_readback_mismatch() {
     Harness bad; bad.connect_group(); bad.c.dreamview().enable_music_control();
     CHECK(bad.c.request_dreamview_music(1, bad.now));
     bad.exchange({0xAA, 0x60, 2}, {0xAA, 0x60, 2, 1, 0, 0, 0, 100});
+    bad.confirm_palette();
     bad.expect({0x33, 0x60, 2, 1, 1, 0, 0, 100});
     if (rejected) {
       bad.reply({0x33, 0x60, 2, 1});
@@ -247,6 +266,7 @@ void stop_survives_music_timeout() {
   Harness timeout; timeout.connect_group(); timeout.c.dreamview().enable_music_control();
   CHECK(timeout.c.request_dreamview_music(3, timeout.now));
   timeout.exchange({0xAA, 0x60, 2}, {0xAA, 0x60, 2, 1, 0, 0, 0, 100});
+  timeout.confirm_palette();
   timeout.expect({0x33, 0x60, 2, 1, 3, 0, 0, 100});
   CHECK(timeout.c.request_dreamview(Op::DISABLE, timeout.now));
   const auto sent = timeout.sent.size();
@@ -311,6 +331,7 @@ void missing_member_connection_timeout() {
   Harness unavailable; unavailable.boot(); unavailable.create();
   CHECK(unavailable.c.request_dreamview(Op::ENABLE, unavailable.now));
   unavailable.tick(); unavailable.power(true);
+  unavailable.confirm_palette();
   unavailable.exchange({0x33, 0x60, 1, 1}, {0x33, 0x60, 1, 0});
   unavailable.exchange({0xAA, 0x60, 1}, {0xAA, 0x60, 1, 1});
   unavailable.exchange({0xAA, 0x60, 5}, {0xAA, 0x60, 5, 1});
@@ -349,6 +370,7 @@ void enable_readback_mismatch() {
   Harness mismatch; mismatch.boot(); mismatch.create();
   CHECK(mismatch.c.request_dreamview(Op::ENABLE, mismatch.now));
   mismatch.tick(); mismatch.power(true);
+  mismatch.confirm_palette();
   mismatch.exchange({0x33, 0x60, 1, 1}, {0x33, 0x60, 1, 0});
   mismatch.exchange({0xAA, 0x60, 1}, {0xAA, 0x60, 1, 0});
   CHECK(std::string(mismatch.c.dreamview().status()) == "error");
@@ -414,6 +436,7 @@ void malformed_ack_is_ignored() {
   Harness malformed; malformed.boot(); malformed.create();
   CHECK(malformed.c.request_dreamview(Op::ENABLE, malformed.now));
   malformed.tick(); malformed.power(true);
+  malformed.confirm_palette();
   malformed.expect({0x33, 0x60, 1, 1});
   malformed.receive(0x63, {0x33, 0x60, 1, 0});
   std::vector<uint8_t> invalid(20); invalid[0] = 0x33; invalid[1] = 0x60; invalid[2] = 1;
@@ -618,6 +641,7 @@ void single_switch_action_recreates_group() {
   single_on.clear_members();
   single_on.expect_group(); single_on.reply({0xA3, 0x60, 0});
   single_on.exchange({0xAA, 0x60, 6}, {0xAA, 0x60, 6, 1});
+  single_on.confirm_palette();
   single_on.exchange({0x33, 0x60, 1, 1}, {0x33, 0x60, 1, 0});
   single_on.exchange({0xAA, 0x60, 1}, {0xAA, 0x60, 1, 1});
   single_on.exchange({0xAA, 0x60, 5}, {0xAA, 0x60, 5, 2});
@@ -677,11 +701,97 @@ void group_encoding_limits() {
   CHECK(dreamview_group(all, 0).size == 0 && dreamview_group(all, 6).size == 0);
 }
 
+void startup_reapplies_palette_without_recreating_group() {
+  const DreamViewStoredGroup stored{1, DreamViewStoredState::GROUP_APPLIED, 1, MEMBERS};
+  Harness h(false, 1, &stored); h.c.dreamview().enable_music_control();
+  h.tick(); h.power(true);
+  h.exchange({0xAA, 0x60, 1}, {0xAA, 0x60, 1, 1});
+  h.exchange({0xAA, 0x60, 6}, {0xAA, 0x60, 6, 1});
+  h.exchange({0xAA, 0x60, 5}, {0xAA, 0x60, 5, 2});
+  h.exchange({0xAA, 0x60, 2}, {0xAA, 0x60, 2, 1, 7, 0, 1, 72});
+  h.exchange({0xAA, 0x60, 2}, {0xAA, 0x60, 2, 1, 7, 0, 1, 72});
+  h.confirm_palette();
+  h.exchange({0x33, 0x60, 2, 1, 7, 0, 1, 72}, {0x33, 0x60, 2, 0});
+  h.confirm_music_effect(7, 1, 72);
+  CHECK(h.c.dreamview().connected() && h.c.dreamview().music_effect() == 7);
+  const auto count = h.sent.size(); h.tick();
+  CHECK(h.sent.size() == count);
+}
+
+void palette_failure_blocks_music_and_enable() {
+  for (bool enabling : {false, true}) {
+    Harness h;
+    if (enabling) {
+      h.boot(); h.create();
+      CHECK(h.c.request_dreamview(Op::ENABLE, h.now));
+      h.expect_payload(0x86, {1}); h.power(true);
+    } else {
+      h.connect_group(); h.c.dreamview().enable_music_control();
+      CHECK(h.c.request_dreamview_music(4, h.now));
+      h.exchange({0xAA, 0x60, 2}, {0xAA, 0x60, 2, 1, 0, 0, 0, 99});
+    }
+    h.expect_payload(0x83, rainbow_payload());
+    h.reply({0xA3, 0x60, 0}); // A membership ACK cannot confirm colors.
+    const auto sent = h.sent.size(); h.tick();
+    CHECK(h.sent.size() == sent);
+    h.reply({0xA3, 0x51, 1});
+    CHECK(h.c.dreamview().failed());
+    h.tick(); h.tick(100);
+    CHECK(h.sent.size() == sent); // No activation or uncontrolled automatic retry.
+  }
+}
+
+void stop_during_palette_upload() {
+  for (bool timeout : {false, true}) {
+    Harness h; h.connect_group(); h.c.dreamview().enable_music_control();
+    CHECK(h.c.request_dreamview_music(4, h.now));
+    h.exchange({0xAA, 0x60, 2}, {0xAA, 0x60, 2, 1, 0, 0, 0, 99});
+    h.expect_payload(0x83, rainbow_payload());
+    CHECK(h.c.request_dreamview(Op::DISABLE, h.now));
+    if (timeout) {
+      h.tick(500); h.tick(500); h.tick(500);
+    } else {
+      h.reply({0xA3, 0x51, 0});
+    }
+    h.confirm_disable();
+    CHECK(!h.c.dreamview().enabled());
+  }
+}
+
+void changed_palette_restarts_current_program() {
+  Harness h; h.connect_group(); h.c.dreamview().enable_music_control();
+  CHECK(h.c.request_dreamview_music(6, h.now));
+  h.exchange({0xAA, 0x60, 2}, {0xAA, 0x60, 2, 1, 0, 0, 1, 72});
+  h.confirm_palette();
+  h.exchange({0x33, 0x60, 2, 1, 6, 0, 1, 72}, {0x33, 0x60, 2, 0});
+  h.confirm_music_effect(6, 1, 72);
+  Palette red{};
+  for (size_t i = 0; i < red.size(); i += 3)
+    red[i] = 255;
+  h.c.set_palette(red);
+  h.exchange({0xAA, 0x60, 2}, {0xAA, 0x60, 2, 1, 6, 0, 1, 72});
+  auto expected = pt_frame({0xA3, 0, 1, 3, 0x51, 7, 255, 0, 0, 255, 0, 0, 255, 0, 0, 255, 0, 0, 255});
+  const auto second = pt_frame({0xA3, 1, 0, 0, 255, 0, 0, 255, 0, 0});
+  const auto end = pt_frame({0xA3, 0xFF});
+  expected.insert(expected.end(), second.begin(), second.end());
+  expected.insert(expected.end(), end.begin(), end.end());
+  h.expect_payload(0x83, expected); h.reply({0xA3, 0x51, 0});
+  h.exchange({0x33, 0x60, 2, 1, 6, 0, 1, 72}, {0x33, 0x60, 2, 0});
+  h.confirm_music_effect(6, 1, 72);
+  CHECK(h.c.dreamview().connected() && h.c.dreamview().music_effect() == 6);
+  const auto count = h.sent.size(); h.tick();
+  CHECK(h.sent.size() == count);
+}
+
 int main() {
   const struct {
     const char *name;
     void (*run)();
   } cases[]{
+      {"startup_reapplies_palette_without_recreating_group", startup_reapplies_palette_without_recreating_group},
+      {"palette_failure_blocks_music_and_enable", palette_failure_blocks_music_and_enable},
+      {"stop_during_palette_upload", stop_during_palette_upload},
+      {"changed_palette_restarts_current_program", changed_palette_restarts_current_program},
       {"music_effect_preserves_group", music_effect_preserves_group},
       {"latest_queued_music_effect_wins", latest_queued_music_effect_wins},
       {"music_readback_at_startup", music_readback_at_startup},

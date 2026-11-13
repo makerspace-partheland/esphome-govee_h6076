@@ -51,6 +51,24 @@ inline Packet dreamview_group(const DreamViewMembers &members, size_t count) {
   return encode(0x83, frames, count_frames * 20);
 }
 
+// Music DreamView uses its own palette upload, separate from ordinary music.
+// The FR applies it when the group/program is activated, not upon upload alone.
+inline Packet dreamview_palette(const Palette &palette) {
+  uint8_t body[25]{1, 3, 0x51, 7};
+  std::copy(palette.begin(), palette.end(), body + 4);
+  uint8_t frames[60]{};
+  for (size_t i = 0; i < 3; ++i) {
+    auto *frame = frames + i * 20;
+    frame[0] = 0xA3;
+    frame[1] = i == 2 ? 0xFF : uint8_t(i);
+    if (i * 17 < sizeof(body))
+      std::copy(body + i * 17, body + std::min(sizeof(body), (i + 1) * 17), frame + 2);
+    for (size_t j = 0; j < 19; ++j)
+      frame[19] ^= frame[j];
+  }
+  return encode(0x83, frames, sizeof(frames));
+}
+
 // One transaction shares the Controller's UART command slot. No background writer,
 // unbounded retry, allocation, or optimistic membership/connection confirmation.
 class DreamView {
@@ -59,7 +77,7 @@ class DreamView {
   enum class Step : uint8_t {
     IDLE, READ_ENABLED, READ_MEMBERS, DISABLE, VERIFY_DISABLED,
     UPLOAD, READ_CONFIG, READ_STORED_CONFIG, ENABLE, VERIFY_ENABLED, REMOVE, VERIFY_REMOVED,
-    READ_MUSIC, WRITE_MUSIC, VERIFY_MUSIC, VERIFY_MUSIC_ENABLED
+    READ_MUSIC, WRITE_PALETTE, WRITE_MUSIC, VERIFY_MUSIC, VERIFY_MUSIC_ENABLED
   };
 
   void set_members(const DreamViewMembers &members, size_t count, const DreamViewStoredGroup &stored = {}) {
@@ -77,6 +95,12 @@ class DreamView {
   }
   bool tracking() const { return this->tracking_; }
   void enable_music_control() { this->music_tracking_ = true; }
+  void set_palette(const Palette &palette) {
+    if (this->palette_ != palette) {
+      this->palette_ = palette;
+      this->palette_ready_ = false;
+    }
+  }
   bool music_known() const { return this->music_known_; }
   uint8_t music_effect() const { return this->music_[1]; }
   bool request_music_effect(uint8_t effect) {
@@ -162,7 +186,7 @@ class DreamView {
     if (operation == Operation::MUSIC && (!this->enabled() || !this->group_uploaded_))
       return false;
     if ((operation == Operation::DISABLE || operation == Operation::REMOVE) &&
-        this->step_ == Step::WRITE_MUSIC && this->sent_step_ == Step::IDLE)
+        (this->step_ == Step::WRITE_MUSIC || this->step_ == Step::WRITE_PALETTE) && this->sent_step_ == Step::IDLE)
       this->finish_();
     if (operation == Operation::DISABLE && this->step_ == Step::ENABLE && this->sent_step_ == Step::IDLE)
       this->finish_();
@@ -192,7 +216,7 @@ class DreamView {
     this->removed_ = false;
     this->members_known_ = false;
     this->operation_ = operation;
-    this->step_ = operation == Operation::ENABLE ? Step::ENABLE : Step::DISABLE;
+    this->step_ = operation == Operation::ENABLE ? Step::WRITE_PALETTE : Step::DISABLE;
     return true;
   }
   void service(uint32_t now, bool link, bool can_configure = true) {
@@ -203,6 +227,7 @@ class DreamView {
     if (!link || (this->enabled_known_ && uint32_t(now - this->last_read_) >= LINK_TIMEOUT_MS)) {
       this->enabled_known_ = this->members_known_ = false;
       this->music_known_ = false;
+      this->palette_ready_ = false;
     }
     if (!this->busy() && link && this->queued_operation_ != Operation::NONE) {
       const auto operation = this->queued_operation_;
@@ -219,6 +244,12 @@ class DreamView {
         this->request(this->count_ == 0 ? Operation::REMOVE : Operation::CREATE);
         this->automatic_configuration_ = true;
       }
+    }
+    // Reapply after an ESP restart or an edited palette without changing the selected program.
+    if (!this->busy() && link && !this->startup_pending_ && !this->error_ && this->enabled() &&
+        this->group_uploaded_ && this->music_known_ && !this->palette_ready_) {
+      this->queued_music_effect_ = this->music_effect();
+      this->request(Operation::MUSIC);
     }
     if (!this->busy() && link && uint32_t(now - this->last_poll_) >= POLL_INTERVAL_MS) {
       this->last_poll_ = now;
@@ -245,6 +276,9 @@ class DreamView {
         return dreamview_command(0x33, 1, 1);
       case Step::REMOVE:
         return dreamview_command(0x33, 7, 0xFF);
+      case Step::WRITE_PALETTE:
+        this->sent_palette_ = this->palette_;
+        return dreamview_palette(this->sent_palette_);
       case Step::WRITE_MUSIC: {
         uint8_t data[20]{0x33, 0x60, 2};
         std::copy(this->music_target_.begin(), this->music_target_.end(), data + 3);
@@ -270,7 +304,18 @@ class DreamView {
     const auto step = this->sent_step_;
     if (step == Step::IDLE)
       return false;
-    if (step == Step::WRITE_MUSIC) {
+    if (step == Step::WRITE_PALETTE) {
+      if (data[0] != 0xA3 || data[1] != 0x51)
+        return false;
+      if (data[2] != 0) {
+        this->fail();
+      } else if (this->queued_operation_ == Operation::DISABLE || this->queued_operation_ == Operation::REMOVE) {
+        this->finish_();
+      } else {
+        this->palette_ready_ = this->palette_ == this->sent_palette_;
+        this->step_ = this->operation_ == Operation::ENABLE ? Step::ENABLE : Step::WRITE_MUSIC;
+      }
+    } else if (step == Step::WRITE_MUSIC) {
       if (data[0] != 0x33 || data[1] != 0x60 || data[2] != 2)
         return false;
       if (data[3] != 0)
@@ -294,7 +339,7 @@ class DreamView {
         // ordinary music modes. Preserve softness and microphone sensitivity.
         this->music_target_ = {1, this->music_effect_target_, 0,
                                uint8_t(this->music_[0] == 1 ? this->music_[3] : 0), this->music_[4]};
-        this->step_ = Step::WRITE_MUSIC;
+        this->step_ = Step::WRITE_PALETTE;
       } else {
         this->finish_();
       }
@@ -397,7 +442,7 @@ class DreamView {
   }
   void fail() {
     const auto queued = this->queued_operation_;
-    const bool keep_stop = this->operation_ == Operation::MUSIC &&
+    const bool keep_stop = (this->operation_ == Operation::MUSIC || this->operation_ == Operation::ENABLE) &&
                            (queued == Operation::DISABLE || queued == Operation::REMOVE);
     if (this->operation_ == Operation::CREATE || this->operation_ == Operation::REMOVE)
       this->group_uploaded_ = false;
@@ -407,6 +452,7 @@ class DreamView {
     this->waiting_for_members_ = false;
     this->queued_operation_ = Operation::NONE;
     this->error_ = true;
+    this->palette_ready_ = false;
     this->command_failed_ = true;
     this->finish_();
     if (keep_stop)
@@ -426,6 +472,8 @@ class DreamView {
     this->step_ = this->sent_step_ = Step::IDLE;
     this->operation_ = Operation::NONE;
   }
+  Palette palette_{RAINBOW}, sent_palette_{};
+  bool palette_ready_{false};
   DreamViewStoredGroup stored_{};
   std::array<uint8_t, 5> music_{}, music_target_{};
   bool music_tracking_{false}, music_known_{false};

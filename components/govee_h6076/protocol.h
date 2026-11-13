@@ -46,6 +46,9 @@ inline Packet encode(uint8_t command, const uint8_t *payload = nullptr, size_t l
   return p;
 }
 
+using Palette = std::array<uint8_t, 21>;
+constexpr Palette RAINBOW{255, 0, 0, 255, 127, 0, 255, 255, 0, 0, 255, 0, 0, 0, 255, 0, 255, 255, 139, 0, 255};
+
 #ifdef USE_GOVEE_DREAMVIEW
 }  // namespace esphome::govee_h6076::protocol
 #include "dreamview.h"
@@ -251,8 +254,6 @@ inline Packet music_packet(uint8_t mode, uint8_t sensitivity, const MusicSetting
     data[19] ^= data[i];
   return encode(0x83, data, sizeof(data));
 }
-using Palette = std::array<uint8_t, 21>;
-constexpr Palette RAINBOW{255, 0, 0, 255, 127, 0, 255, 255, 0, 0, 255, 0, 0, 0, 255, 0, 255, 255, 139, 0, 255};
 // Configurable music profile; four related A3 packets precede the mode packet.
 inline Packet custom_music_profile(const Palette &palette, uint8_t action_type = 1, uint8_t direction = 5,
                                    uint8_t idle_brightness = 0, uint8_t decay_speed = 1, uint8_t color_order = 0,
@@ -878,6 +879,9 @@ class Controller {
 
   void set_palette(const Palette &palette) {
     this->palette_ = palette;
+#ifdef USE_GOVEE_DREAMVIEW
+    this->dreamview_.set_palette(palette);
+#endif
     if (this->music_requested_)
       this->start_music(this->music_sensitivity_, this->music_mode_, this->music_settings_);
   }
